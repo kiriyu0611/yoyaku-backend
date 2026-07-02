@@ -1,71 +1,59 @@
-const fs = require("fs");
-const path = require("path");
 const crypto = require("crypto");
+const { Pool } = require("pg");
 
-// better-sqlite3はWindows環境でビルドツール(Python等)が必要になり、
-// 初心者にはインストールの壁が高いため、あえて「ただのJSONファイル」で保存する方式にしている。
-// 配信者の人数が数百人規模になるまでは実用上まったく問題ない。
-const DATA_FILE = path.join(__dirname, "..", "data.json");
-
-function loadAll() {
-  if (!fs.existsSync(DATA_FILE)) return {};
-  try {
-    return JSON.parse(fs.readFileSync(DATA_FILE, "utf-8"));
-  } catch {
-    return {};
-  }
-}
-
-function saveAll(data) {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+// SupabaseはSSL接続が必須。証明書の検証はSupabase側の仕様に合わせて緩めている。
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
 function genOverlayToken() {
   return crypto.randomBytes(16).toString("hex");
 }
 
 /** OAuth成功時に呼ぶ。新規なら作成、既存なら情報を上書きする */
-function upsertStreamer({ broadcasterId, login, displayName, accessToken, refreshToken, expiresIn }) {
-  const data = loadAll();
+async function upsertStreamer({ broadcasterId, login, displayName, accessToken, refreshToken, expiresIn }) {
   const tokenExpiresAt = Date.now() + expiresIn * 1000;
-  const existing = data[broadcasterId];
+  const existing = await getStreamerById(broadcasterId);
+  const overlayToken = existing?.overlay_token || genOverlayToken();
+  const createdAt = existing?.created_at || Date.now();
 
-  data[broadcasterId] = {
-    broadcaster_id: broadcasterId,
-    login,
-    display_name: displayName,
-    access_token: accessToken,
-    refresh_token: refreshToken,
-    token_expires_at: tokenExpiresAt,
-    overlay_token: existing?.overlay_token || genOverlayToken(),
-    created_at: existing?.created_at || Date.now(),
-  };
+  await pool.query(
+    `insert into streamers (broadcaster_id, login, display_name, access_token, refresh_token, token_expires_at, overlay_token, created_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8)
+     on conflict (broadcaster_id) do update set
+       login = excluded.login,
+       display_name = excluded.display_name,
+       access_token = excluded.access_token,
+       refresh_token = excluded.refresh_token,
+       token_expires_at = excluded.token_expires_at`,
+    [broadcasterId, login, displayName, accessToken, refreshToken, tokenExpiresAt, overlayToken, createdAt]
+  );
 
-  saveAll(data);
-  return data[broadcasterId];
+  return getStreamerById(broadcasterId);
 }
 
-function updateTokens(broadcasterId, { accessToken, refreshToken, expiresIn }) {
-  const data = loadAll();
-  if (!data[broadcasterId]) return;
-  data[broadcasterId].access_token = accessToken;
-  data[broadcasterId].refresh_token = refreshToken;
-  data[broadcasterId].token_expires_at = Date.now() + expiresIn * 1000;
-  saveAll(data);
+async function updateTokens(broadcasterId, { accessToken, refreshToken, expiresIn }) {
+  const tokenExpiresAt = Date.now() + expiresIn * 1000;
+  await pool.query(
+    `update streamers set access_token=$1, refresh_token=$2, token_expires_at=$3 where broadcaster_id=$4`,
+    [accessToken, refreshToken, tokenExpiresAt, broadcasterId]
+  );
 }
 
-function getStreamerById(broadcasterId) {
-  const data = loadAll();
-  return data[broadcasterId] || null;
+async function getStreamerById(broadcasterId) {
+  const { rows } = await pool.query(`select * from streamers where broadcaster_id = $1`, [broadcasterId]);
+  return rows[0] || null;
 }
 
-function getStreamerByOverlayToken(token) {
-  const data = loadAll();
-  return Object.values(data).find((s) => s.overlay_token === token) || null;
+async function getStreamerByOverlayToken(token) {
+  const { rows } = await pool.query(`select * from streamers where overlay_token = $1`, [token]);
+  return rows[0] || null;
 }
 
-function getAllStreamers() {
-  return Object.values(loadAll());
+async function getAllStreamers() {
+  const { rows } = await pool.query(`select * from streamers`);
+  return rows;
 }
 
 module.exports = {
