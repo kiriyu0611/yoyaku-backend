@@ -25,6 +25,10 @@ const app = express();
 app.use(cors({ origin: FRONTEND_URL, credentials: true }));
 app.use(express.json());
 
+// UptimeRobot等の外部監視サービスがここに定期アクセスすることで、
+// Renderの無料プランが「非アクティブ」と判断してスリープするのを防ぐ。
+app.get("/health", (req, res) => res.status(200).send("ok"));
+
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: FRONTEND_URL, credentials: true } });
 
