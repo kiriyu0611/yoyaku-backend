@@ -104,18 +104,27 @@ app.get("/api/overlay/:token/state", async (req, res) => {
 // オーバーレイ画面: 接続時に ?overlayToken=xxx を渡してもらい、対応するルームに入る(読み取り専用)
 io.use(async (socket, next) => {
   const overlayToken = socket.handshake.query.overlayToken;
+  console.log(`[Socket] 接続試行 overlayToken=${overlayToken || "(なし)"}`);
   if (overlayToken) {
     const streamer = await db.getStreamerByOverlayToken(overlayToken);
-    if (!streamer) return next(new Error("invalid_overlay_token"));
+    if (!streamer) {
+      console.log(`[Socket] overlayTokenが無効です: ${overlayToken}`);
+      return next(new Error("invalid_overlay_token"));
+    }
     socket.data.role = "overlay";
     socket.data.broadcasterId = streamer.broadcaster_id;
+    console.log(`[Socket] overlayとして接続成功 broadcasterId=${streamer.broadcaster_id}`);
     return next();
   }
 
   const broadcasterId = auth.readBroadcasterIdFromCookieHeader(socket.handshake.headers.cookie, SESSION_SECRET);
-  if (!broadcasterId) return next(new Error("not_logged_in"));
+  if (!broadcasterId) {
+    console.log("[Socket] Cookie認証にも失敗しました");
+    return next(new Error("not_logged_in"));
+  }
   socket.data.role = "host";
   socket.data.broadcasterId = broadcasterId;
+  console.log(`[Socket] hostとして接続成功 broadcasterId=${broadcasterId}`);
   next();
 });
 
