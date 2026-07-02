@@ -6,13 +6,16 @@ const COOKIE_MAX_AGE_SEC = 60 * 60 * 24 * 30; // 30日
 
 function signSessionCookie(broadcasterId, secret) {
   const token = jwt.sign({ broadcasterId }, secret, { expiresIn: COOKIE_MAX_AGE_SEC });
+  const isProd = process.env.NODE_ENV === "production";
   return cookie.serialize(COOKIE_NAME, token, {
     httpOnly: true,
-    sameSite: "lax",
+    // 本番はフロントとバックエンドが別ドメイン(onrender.comの別サブドメイン)になるため、
+    // クロスサイトのfetch/socket.io接続でもCookieが送られるよう sameSite: "none" にする必要がある。
+    // ただしSameSite=NoneはSecure(https)必須なので、ローカル開発(http)ではlaxのままにする。
+    sameSite: isProd ? "none" : "lax",
     maxAge: COOKIE_MAX_AGE_SEC,
     path: "/",
-    // 本番でhttps化したら secure: true にすること(このリポジトリではNODE_ENVで自動切り替え)
-    secure: process.env.NODE_ENV === "production",
+    secure: isProd,
   });
 }
 
