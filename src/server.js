@@ -48,7 +48,7 @@ app.get("/auth/twitch/callback", async (req, res) => {
     });
     const me = await twitch.getMyUser({ clientId: TWITCH_CLIENT_ID, accessToken: tokenData.access_token });
 
-    const streamer = db.upsertStreamer({
+    const streamer = await db.upsertStreamer({
       broadcasterId: me.id,
       login: me.login,
       displayName: me.display_name,
@@ -74,8 +74,8 @@ app.post("/auth/logout", (req, res) => {
 });
 
 // ── ログイン中の配信者向けAPI ──────────────────────────
-app.get("/api/me", auth.requireAuth(SESSION_SECRET), (req, res) => {
-  const streamer = db.getStreamerById(req.broadcasterId);
+app.get("/api/me", auth.requireAuth(SESSION_SECRET), async (req, res) => {
+  const streamer = await db.getStreamerById(req.broadcasterId);
   if (!streamer) return res.status(404).json({ error: "not_found" });
   res.json({
     login: streamer.login,
@@ -92,8 +92,8 @@ app.get("/api/queue", auth.requireAuth(SESSION_SECRET), (req, res) => {
 });
 
 // ── オーバーレイ用の公開API(ログイン不要・秘密トークンで判定) ──
-app.get("/api/overlay/:token/state", (req, res) => {
-  const streamer = db.getStreamerByOverlayToken(req.params.token);
+app.get("/api/overlay/:token/state", async (req, res) => {
+  const streamer = await db.getStreamerByOverlayToken(req.params.token);
   if (!streamer) return res.status(404).json({ error: "invalid_token" });
   const runtime = getRuntime(streamer.broadcaster_id);
   res.json({ queue: runtime.queue.list(), size: runtime.queue.size() });
@@ -102,10 +102,10 @@ app.get("/api/overlay/:token/state", (req, res) => {
 // ── Socket.io ──────────────────────────────────────
 // ホスト管理画面: Cookie(JWT)で本人確認して、自分の配信専用ルームに入る
 // オーバーレイ画面: 接続時に ?overlayToken=xxx を渡してもらい、対応するルームに入る(読み取り専用)
-io.use((socket, next) => {
+io.use(async (socket, next) => {
   const overlayToken = socket.handshake.query.overlayToken;
   if (overlayToken) {
-    const streamer = db.getStreamerByOverlayToken(overlayToken);
+    const streamer = await db.getStreamerByOverlayToken(overlayToken);
     if (!streamer) return next(new Error("invalid_overlay_token"));
     socket.data.role = "overlay";
     socket.data.broadcasterId = streamer.broadcaster_id;
@@ -129,7 +129,7 @@ io.on("connection", (socket) => {
   if (role !== "host") return; // オーバーレイ画面は読み取り専用。呼び出し操作はホストのみ許可
 
   socket.on("viewer:call", async ({ login, displayName }) => {
-    const streamer = db.getStreamerById(broadcasterId);
+    const streamer = await db.getStreamerById(broadcasterId);
     if (!streamer) return;
     try {
       await callViewer(streamer, { login, displayName }, { io, ...twitchCreds });
@@ -140,9 +140,12 @@ io.on("connection", (socket) => {
 });
 
 // ── 起動時: 既に連携済みの配信者全員のチャット監視を再開する ──
-for (const streamer of db.getAllStreamers()) {
-  ensureChatListener(streamer, { io, ...twitchCreds });
-}
+(async () => {
+  const streamers = await db.getAllStreamers();
+  for (const streamer of streamers) {
+    ensureChatListener(streamer, { io, ...twitchCreds });
+  }
+})();
 
 server.listen(PORT, () => {
   console.log(`サーバー起動: http://localhost:${PORT}`);
