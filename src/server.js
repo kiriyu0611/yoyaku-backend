@@ -73,7 +73,19 @@ app.get("/auth/twitch/callback", async (req, res) => {
 });
 
 app.post("/auth/logout", (req, res) => {
-  res.setHeader("Set-Cookie", cookie.serialize(auth.COOKIE_NAME, "", { httpOnly: true, path: "/", maxAge: 0 }));
+  const isProd = process.env.NODE_ENV === "production";
+  // ログイン時にセットしたCookieと同じ属性(sameSite/secure)を指定しないと、
+  // ブラウザ側で「別のCookie」とみなされて削除が反映されないことがある。
+  res.setHeader(
+    "Set-Cookie",
+    cookie.serialize(auth.COOKIE_NAME, "", {
+      httpOnly: true,
+      path: "/",
+      maxAge: 0,
+      sameSite: isProd ? "none" : "lax",
+      secure: isProd,
+    })
+  );
   res.json({ ok: true });
 });
 
