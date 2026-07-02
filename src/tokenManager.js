@@ -19,7 +19,7 @@ async function getValidAccessToken(streamer, { clientId, clientSecret }) {
     refreshToken: streamer.refresh_token,
   });
 
-  db.updateTokens(streamer.broadcaster_id, {
+  await db.updateTokens(streamer.broadcaster_id, {
     accessToken: data.access_token,
     refreshToken: data.refresh_token,
     expiresIn: data.expires_in,
